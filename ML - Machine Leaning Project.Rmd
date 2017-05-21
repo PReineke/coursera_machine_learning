@@ -1,0 +1,360 @@
+---
+title: "Machine Learning - Final Project"
+author: "Philipp Reineke"
+date: "21 May 2017"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, include = FALSE)
+```
+
+## Preparing environment
+I first clean the workspace, download the data, load libraries, and set a seed.
+In this project I use the R libraries "caret", "ggplot2", and "doParallel". My 
+random seed is "123".
+
+```{r preparing_environment}
+################################################################################
+# Preparing Environment
+################################################################################
+# cleaning environment
+rm(list = ls())
+
+# loading libraries
+library(caret)
+library(ggplot2)
+library(doParallel)
+
+# downloading data
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "ML_Training - 14May2017.csv", "curl")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "ML_Testing - 14May2017-csv", "curl")
+
+# loading data into R
+training <- read.csv("ML_Training - 14May2017.csv", header = TRUE)
+testing <- read.csv("ML_Testing - 14May2017-csv", header = TRUE)
+
+# setting seed
+set.seed(123)
+```
+
+## Creating validation set
+Because a lot of training data is available I split the training data into a 
+training and an additional validation dataset. The validation dataset contains
+25% of the original training entries.
+
+```{r creating_validation_set}
+################################################################################
+# Splitting data into training and validation set
+################################################################################
+inTrain <- createDataPartition(y=training$classe,
+                               p=0.75, list=FALSE)
+
+training <- training[inTrain,]
+validation <- training[-inTrain,]
+
+```
+
+
+## Cleaning data 
+### Removing unavailable entries
+I am aware that it's not permissible to do exploratory data analysis on the 
+test data. However, I think it can be assumed that we will know if a variable 
+will be completely unavailable in the test set (e.g. if we don't even plan on
+collecting the variable in the test set). Therefore, I delete all variables in
+both training and test set for which we don't have any data in the test set.
+This has three benefits:
+
+1. I don't have to impute missing data.
+2. It reduces the amount of variables and thereby saves computation time.
+3. It reduces the amount of data that needs to be processed and thereby saves RAM, especially during parallelized computations.
+
+```{r removing_unavailable_entries}
+################################################################################
+# cleaning data
+################################################################################
+#######################################
+# removing unavailable variables
+#######################################
+# I am aware that it's not permissible to do exploratory data analysis on the 
+# test data. However, I think it can be assumed that we will know if a variable 
+# will be completely unavailable in the test set (e.g. we don't even plan on
+# collecting the variable in the test set). Therefore, I delete all variables in
+# both training and test set for which we don't have any data in the test set.
+# This has two benefits:
+
+# 1) I don't have to impute missing data
+# 2) It reduces the amount of variables and thereby saves computation time
+
+invalid_columns <- unlist(lapply(testing, function(x) sum(is.na(x)) == nrow(testing)))
+testing <- testing[,which(!invalid_columns)]
+
+training <- training[,colnames(training) %in% c(colnames(testing), "classe")]
+validation <- validation[,colnames(validation) %in% c(colnames(testing), "classe")]
+```
+
+### Detecting near zero variables
+I try to further reduce complexity of the input data by deleting variables 
+that have almost no variance in the training set.
+
+There is one near zero veraible - "new window". This is near zero becaus it's
+a binary variable indicating whether a new summary window has begun. In the 
+original publication this was a sliding window during which the researcher
+averaged values. I can't replicate that merger here because the test data won't
+be merge data. So this variable might indeed be superfluous. Therefore I will 
+delete it.
+
+```{r detecting_near_zero_variables}
+#######################################
+# detecting near zero variables
+#######################################
+# I try to further reduce complexity of the input data by deleting variables 
+# that have almost no variance in the training set.
+nsv <- nearZeroVar(training, saveMetrics=TRUE)
+
+training$new_window <- NULL
+```
+
+
+### Deleting counter variable
+The training set contains counter variables for each row. I delete them for
+convenience because then I can just use the "." operator to include all 
+variables as independent variables in the train functions. If the counter
+would be included it would perfectly explain automes because its unique 
+per row.
+
+```{r deleting_counter_variable}
+#######################################
+# deleting counter variables
+#######################################
+# The training set contains counter variables for each row. I delete them for
+# convenience because then I can just use the "." operator to include all 
+# variables as independent variables in the train functions. If the counter
+# would be included it would perfectly explain automes because its unique 
+# per row.
+training$X <- NULL
+```
+
+## Exploratory data analysis
+### Examining variables
+First, I run some simple exploratory analyses using the "str"" and "summary" and
+functions on the training set.
+
+```{r exploratory_data_analysis_1}
+# examining variables
+str(training)
+summary(training)
+```
+There are some timestamp values that are redundant. cvtd_timestamp contains 
+all information of raw_timestamp_part_1 and raw_timestamp_part_2. However,
+cvtd_timestamp is a factor variable. Therefore, preditions might not work
+if the testing data contains factors that don't also appear in the training 
+data (i.e. if the testing data has been collected at completely different 
+training sessions). For now I delete the factor variables.
+
+```{r exploratory_data_analysis_2}
+training$cvtd_timestamp <- NULL
+```
+
+## Exploratory graphs
+I also create some exploratory graphs to detect whether variation in the data 
+is more different across users or types of execution.
+
+```{r exploratory_data_analysis_3, echo = FALSE, include = TRUE}
+a <- qplot(roll_belt, pitch_belt, colour = classe, data = training)
+b <- qplot(roll_belt, pitch_belt, colour = user_name, data = training)
+c <- qplot(roll_belt, yaw_belt, colour = classe, data = training)
+d <- qplot(roll_belt, yaw_belt, colour = user_name, data = training)
+
+# Multiple plot function
+#
+# ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
+# - cols:   Number of columns in layout
+# - layout: A matrix specifying the layout. If present, 'cols' is ignored.
+#
+# If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE),
+# then plot 1 will go in the upper left, 2 will go in the upper right, and
+# 3 will go all the way across the bottom.
+#
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+
+multiplot(a, b, c, d, cols = 2); rm(a, b, c, d, multiplot)
+```
+
+It appears as if there is considerable variance in excercise execution among
+users and less variance depending on whether the person does the exercise 
+correctly. As such, users need to be included in the prediction algorithm and 
+predictions will be much less accurate if we are predicting the exercises of 
+unknown users.
+
+## Feature detection
+Feature detection has already been conducted by the authors of the data.
+Therefore, I am not doing any additional feature detection.
+
+## Training the algorithm
+I am training prediction models using the caret package. I am trying different 
+algorithms and resamples to determine the most accurate approach to predicting 
+the "classe" variable. Because the dependent variable is a factor some 
+prediction algorithms (e.g. linear models) don't work. I am using the "lda", 
+"gbm", "rpart", "rf", and "LogitBoost" algorithms and try each with "boot", 
+"boot632", "cv", "repeatedcv" resampling. Because some caret models support 
+parallel processing I am running the computations on multiple cores (1 less than 
+the max amount of cores on my system so as to not block my complete system 
+during the computation). I'm using the parallel backend of the "doParallel" 
+package.
+
+
+```{r training_the_algorithm, echo = FALSE, message=FALSE, warning=FALSE, include=FALSE}
+#######################################
+# Defining resamples
+#######################################
+# NOT LOOCV because woult take way too long with the data (19622 cases...)
+resamples <- c("boot", "boot632", "cv", "repeatedcv")
+
+#######################################
+# Defining algorithms / models
+#######################################
+models <- c("lda", "gbm", "rpart", "rf")
+
+#######################################
+# Running algorithms
+#######################################
+# creating list to store results (in case there are different results metrics to 
+# different ml models)
+result_list <- list()
+
+# creaing list of different configurtions
+configurations <- expand.grid(models, resamples)
+
+# setting variable classes to character
+configurations[] <- lapply(configurations, as.character)
+
+# setting colnames
+colnames(configurations) <- c("models", "resamples")
+
+# creating configuration name row
+configurations$name <- paste0(configurations$models,"_",configurations$resamples)
+
+# creating timing row to see how long different approaches take (in min)
+configurations$timer <- NA
+
+# printing to console for reference
+configurations
+
+# registering parallel backend
+cl <- makeCluster(detectCores()-1); registerDoParallel(cl)
+
+for (i in 1:nrow(configurations)) {
+                # starting timer        
+                x <- Sys.time()
+        
+                # defining resample
+                train_control <- trainControl(method = configurations[i,2])
+                
+                # training the model. If errors occur, don't break the loop. 
+                # if the function is verbose, don't print the output to the 
+                # console.
+                model_fit <- invisible(try(train(classe ~ . , data = training, method = configurations[i,1], trControl = train_control)))
+                
+                # if there is an error, next iteration
+                if(class(model_fit) %in% 'try-error') {next}
+                
+                # attaching results to result_list
+                result_list[i] <- model_fit$results
+                
+                # saving model under new name
+                assign(configurations[i,3], model_fit)
+                
+                # svaing timing information
+                configurations[i,4] <- as.numeric(difftime(Sys.time(), x, units = "mins"))
+                
+                # cleaning up
+                rm(model_fit)
+                
+                # reporting status
+                print(paste0(i," of ", nrow(configurations), " (", configurations[i,3], ") ", "completed in ", configurations[i,4], " minutes"))
+}
+
+# stopping cluster
+stopCluster(cl); registerDoSEQ();
+
+# delete any configurations that had errors, i.e. delete all configurations that
+# didn't return an execution time
+configurations <- configurations[!is.na(configurations$timer),]
+```
+
+## Evaluating accuracy
+One simple metric to detect the estimation error for estimating factor variables
+is accuracy (share of observations estimated correctly). Therefore, I am 
+determining the accuracy of all algorithms that ran successfully for both the
+training and the validation set.
+
+```{r evaluating_accuracy, echo = FALSE, include = TRUE}
+# creating columns to store training and validation set accuracy
+configurations$accuracy_training <- NA
+configurations$accuracy_validation <- NA
+
+# detecting accuracy
+for (i in 1:nrow(configurations)) {
+        prediction_training <- predict(eval(parse(text=configurations[i,3])), training)
+        prediction_validation <- predict(eval(parse(text=configurations[i,3])), validation)
+        
+        configurations[i,5] <- sum(ifelse(as.character(prediction_training) == as.character(training$classe), 1, 0))/nrow(training)
+        configurations[i,6] <- sum(ifelse(as.character(prediction_validation) == as.character(validation$classe), 1, 0))/nrow(validation)
+        }
+
+# printing outcomes to the console
+configurations
+```
+
+The Random forest algorithm seems to be the most successful prediction 
+algorithm for this problem. It achieves perfect prediction accuracy in both test 
+and validation sets, regardless of the resampling method used. Generally, 
+resampling seems to have a negligible impact on accuracy outcomes but a large
+impact on processing times.
+
+## Creating combined estimator
+Creating combined estimators does not seem necessary because there are already 
+algorithms that produce perfect results in both the training and the validation 
+sets.
+
+## Running final prediction on testing data
+Finally, I use the random forest algorithm with standard bootstrap resampling to 
+predict the test set classes.
+
+```{r running_final_prediction_on_testing_data}
+testing$prediction <- predict(rf_boot, testing)
+```

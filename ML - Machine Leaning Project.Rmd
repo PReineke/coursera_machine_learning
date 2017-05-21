@@ -346,9 +346,9 @@ resampling seems to have a negligible impact on accuracy outcomes but a large
 impact on processing times.
 
 ## Creating combined estimator
-Creating combined estimators does not seem necessary because there are already 
-algorithms that produce perfect results in both the training and the validation 
-sets.
+Creating estimators that combine results of different prediction algorithms does 
+not seem necessary because there are already algorithms that produce perfect 
+results in both the training and the validation sets.
 
 ## Running final prediction on testing data
 Finally, I use the random forest algorithm with standard bootstrap resampling to 

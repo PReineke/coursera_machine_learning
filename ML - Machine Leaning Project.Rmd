@@ -229,12 +229,11 @@ I am training prediction models using the caret package. I am trying different
 algorithms and resamples to determine the most accurate approach to predicting 
 the "classe" variable. Because the dependent variable is a factor some 
 prediction algorithms (e.g. linear models) don't work. I am using the "lda", 
-"gbm", "rpart", "rf", and "LogitBoost" algorithms and try each with "boot", 
-"boot632", "cv", "repeatedcv" resampling. Because some caret models support 
-parallel processing I am running the computations on multiple cores (1 less than 
-the max amount of cores on my system so as to not block my complete system 
-during the computation). I'm using the parallel backend of the "doParallel" 
-package.
+"gbm", "rpart", and "rf" algorithms and try each with "boot", "boot632", "cv", 
+"repeatedcv" resampling. Because some caret models support parallel processing 
+I am running the computations on multiple cores (1 less than the max amount of 
+cores on my system so as to not block my complete system during the 
+computation). I'm using the parallel backend of the "doParallel" package.
 
 
 ```{r training_the_algorithm, echo = FALSE, message=FALSE, warning=FALSE, include=FALSE}
@@ -353,7 +352,9 @@ sets.
 
 ## Running final prediction on testing data
 Finally, I use the random forest algorithm with standard bootstrap resampling to 
-predict the test set classes.
+predict the test set classes. Since the prediction had perfect accuracy on both 
+the training and the validation set I expect an out of sample error of 0 or very 
+close to it.
 
 ```{r running_final_prediction_on_testing_data}
 testing$prediction <- predict(rf_boot, testing)
